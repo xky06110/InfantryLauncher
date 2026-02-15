@@ -94,11 +94,6 @@ depends:
 #include "thread.hpp"
 #include "timebase.hpp"
 
-#ifdef DEBUG
-#include "DebugCore.hpp"
-#include "ramfs.hpp"
-#endif
-
 template <class LauncherType>
 class Launcher : public LibXR::Application {
  public:
@@ -112,19 +107,17 @@ class Launcher : public LibXR::Application {
     float trig_freq_;
   };
 
-  Launcher(
-      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-      RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
-      RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,
-      RMMotor* motor_trig, uint32_t task_stack_depth,
-      LibXR::PID<float>::Param pid_trig_angle,
-      LibXR::PID<float>::Param pid_trig_speed,
-      LibXR::PID<float>::Param pid_fric_speed_0,
-      LibXR::PID<float>::Param pid_fric_speed_1,
-      LibXR::PID<float>::Param pid_fric_speed_2,
-      LibXR::PID<float>::Param pid_fric_speed_3, LauncherParam launcher_param,
-      CMD* cmd,
-      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH)
+  Launcher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+           RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
+           RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,
+           RMMotor* motor_trig, uint32_t task_stack_depth,
+           LibXR::PID<float>::Param pid_trig_angle,
+           LibXR::PID<float>::Param pid_trig_speed,
+           LibXR::PID<float>::Param pid_fric_speed_0,
+           LibXR::PID<float>::Param pid_fric_speed_1,
+           LibXR::PID<float>::Param pid_fric_speed_2,
+           LibXR::PID<float>::Param pid_fric_speed_3,
+           LauncherParam launcher_param, CMD* cmd)
       : launcher_(hw, app, motor_fric_front_left, motor_fric_front_right,
                   motor_fric_back_left, motor_fric_back_right, motor_trig,
                   task_stack_depth, pid_trig_angle, pid_trig_speed,
@@ -135,16 +128,8 @@ class Launcher : public LibXR::Application {
                       launcher_param.fric2_setpoint_speed,
                       launcher_param.trig_gear_ratio,
                       launcher_param.num_trig_tooth, launcher_param.trig_freq_},
-                  cmd)
-#ifdef DEBUG
-        ,
-        cmd_file_(LibXR::RamFS::CreateFile(
-            "launcher",
-            debug_core::command_thunk<LauncherType,
-                                      &LauncherType::DebugCommand>,
-            &launcher_))
-#endif
-  {
+                  cmd) {
+    UNUSED(hw);
     UNUSED(app);
 
 #ifdef DEBUG
@@ -187,6 +172,8 @@ class Launcher : public LibXR::Application {
         },
         this);
     launcher_event_.Register(
+        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX), callback);
+    launcher_event_.Register(
         static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX),
         event_callback);
     launcher_event_.Register(
@@ -204,39 +191,4 @@ class Launcher : public LibXR::Application {
  private:
   LauncherType launcher_;
   LibXR::Event launcher_event_;
-  LibXR::Thread thread_;
-  LibXR::Mutex mutex_;
-
-#ifdef DEBUG
-  LibXR::RamFS::File cmd_file_;
-#endif
-
-  static void ThreadFunc(Launcher* self) {
-    LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_sub("launcher_cmd");
-    cmd_sub.StartWaiting();
-    self->last_wakeup_time_ = LibXR::Timebase::GetMilliseconds();
-    self->last_online_time_ = LibXR::Timebase::GetMicroseconds();
-
-    while (true) {
-      LibXR::Thread::SleepUntil(self->last_wakeup_time_, 2);
-
-      auto now = LibXR::Timebase::GetMicroseconds();
-      self->launcher_.SetControlDt((now - self->last_online_time_).ToSecondf());
-      self->last_online_time_ = now;
-
-      if (cmd_sub.Available()) {
-        self->launcher_.launcher_cmd_ = cmd_sub.GetData();
-        cmd_sub.StartWaiting();
-      }
-
-      self->mutex_.Lock();
-      self->launcher_.Update();
-      self->launcher_.Solve();
-      self->mutex_.Unlock();
-      self->launcher_.Control();
-    }
-  }
-
-  LibXR::MillisecondTimestamp last_wakeup_time_ = 0;
-  LibXR::MicrosecondTimestamp last_online_time_ = 0;
 };

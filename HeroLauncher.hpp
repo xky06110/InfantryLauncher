@@ -178,7 +178,7 @@ class HeroLauncher {
                LibXR::PID<float>::Param fric_speed_pid_2,
                LibXR::PID<float>::Param fric_speed_pid_3,
                LauncherParam launcher_param, CMD* cmd)
-      : param_(launcher_param),
+      : PARAM(launcher_param),
         motor_fric_front_left_(motor_fric_front_left),
         motor_fric_front_right_(motor_fric_front_right),
         motor_fric_back_left_(motor_fric_back_left),
@@ -190,15 +190,51 @@ class HeroLauncher {
                         fric_speed_pid_3} {
     UNUSED(hw);
     UNUSED(app);
-    UNUSED(task_stack_depth);
-    UNUSED(cmd);
+    // Hardware initialization example:
+    // auto dev = hw.template Find<LibXR::GPIO>("led");
 
-    last_wakeup_ = LibXR::Timebase::GetMicroseconds();
+    thread_.Create(this, ThreadFunction, "HeroLauncherThread", task_stack_depth,
+                   LibXR::Thread::Priority::MEDIUM);
+    auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
+        [](bool in_isr, HeroLauncher* HeroLauncher, uint32_t event_id) {
+          UNUSED(in_isr);
+          UNUSED(event_id);
+          HeroLauncher->LostCtrl();
+        },
+        this);
+    cmd_->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
+
+    auto launcher_cmd_callback = LibXR::Callback<LibXR::RawData&>::Create(
+        [](bool in_isr, HeroLauncher* HeroLauncher, LibXR::RawData& raw_data) {
+          UNUSED(in_isr);
+          CMD::LauncherCMD cmd_lau =
+              *reinterpret_cast<CMD::LauncherCMD*>(raw_data.addr_);
+          HeroLauncher->launcher_cmd_.isfire = cmd_lau.isfire;
+        },
+        this);
+
+    auto tp_cmd_launcher =
+        LibXR::Topic(LibXR::Topic::Find("launcher_cmd", nullptr));
+
+    tp_cmd_launcher.RegisterCallback(launcher_cmd_callback);
   }
 
-  /**
-   * @brief 更新电机反馈和状态量
-   */
+  static void ThreadFunction(HeroLauncher* HeroLauncher) {
+    LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> launcher_cmd_tp(
+        "launcher_cmd");
+    launcher_cmd_tp.StartWaiting();
+    auto last_time = LibXR::Timebase::GetMilliseconds();
+    while (true) {
+      HeroLauncher->mutex_.Lock();
+      HeroLauncher->Update();
+      HeroLauncher->HeatLimit();
+      HeroLauncher->mutex_.Unlock();
+      HeroLauncher->Control();
+
+      HeroLauncher->thread_.SleepUntil(last_time, 2);
+    }
+  }
+
   void Update() {
     this->last_wakeup_ = LibXR::Timebase::GetMicroseconds();
 
@@ -236,6 +272,58 @@ class HeroLauncher {
    * @details 拨弹控制、发弹检测和摩擦轮PID输出。
    */
   void Control() {
+    LibXR::MillisecondTimestamp now_time = LibXR::Timebase::GetMilliseconds();
+
+    if (launcher_event_ != LauncherEvent::SET_FRICMODE_RELAX) {
+      if (launcher_cmd_.isfire && !last_fire_notify_) {  // 拨弹盘模式设定
+        fire_press_time_ = now_time;
+        press_continue_ = false;
+        trig_mod_ = TRIGMODE::SINGLE;
+      } else if (launcher_cmd_.isfire && last_fire_notify_) {
+        if (!press_continue_ && (now_time - fire_press_time_ > 200)) {
+          press_continue_ = true;
+        }
+        if (press_continue_) {
+          trig_mod_ = TRIGMODE::CONTINUE;
+        }
+      } else {
+        trig_mod_ = TRIGMODE::SAFE;
+        press_continue_ = false;
+      }
+    } else {
+      trig_mod_ = TRIGMODE::RELAX;
+    }
+
+    last_fire_notify_ = launcher_cmd_.isfire;
+
+    switch (launcher_event_) {
+      case LauncherEvent::SET_FRICMODE_RELAX:
+      case LauncherEvent::SET_FRICMODE_SAFE:
+        fric_target_speed_[0] = 0;
+        fric_target_speed_[1] = 0;
+        fric_target_speed_[2] = 0;
+        fric_target_speed_[3] = 0;
+        for (LibXR::PID<float>& i : fric_speed_pid_) {
+          i.SetOutLimit(0.1f);
+        }
+        break;
+      case LauncherEvent::SET_FRICMODE_READY:
+
+        fric_target_speed_[0] = PARAM.fric2_setpoint_speed;
+        fric_target_speed_[1] = PARAM.fric2_setpoint_speed;
+        fric_target_speed_[2] = PARAM.fric1_setpoint_speed;
+        fric_target_speed_[3] = PARAM.fric1_setpoint_speed;
+        if (motor_fric_back_left_->GetFeedback().velocity >
+            PARAM.fric1_setpoint_speed) {
+          fric_speed_pid_[0].SetOutLimit(1.0f);
+          fric_speed_pid_[1].SetOutLimit(1.0f);
+          fric_speed_pid_[2].SetOutLimit(0.8f);
+          fric_speed_pid_[3].SetOutLimit(0.8f);
+        }
+        break;
+      default:
+        break;
+    }
     /*电流cur=tor/K*/
     current_back_left_ =
         param_motor_fric_back_left_.torque / M3508_TORQUE_CONSTANT;
@@ -247,21 +335,58 @@ class HeroLauncher {
     }
     real_launch_delay_ = (finish_fire_time_ - start_fire_time_).ToMillisecond();
 
-    FricPidControl();
-    TrigPidControl();
-  }
+    cmd_fric_front_left_.velocity = fric_speed_pid_[0].Calculate(
+        fric_target_speed_[0], param_motor_fric_front_left_.velocity, dt_);
+    cmd_fric_front_right_.velocity = fric_speed_pid_[1].Calculate(
+        fric_target_speed_[1], param_motor_fric_front_right_.velocity, dt_);
+    cmd_fric_back_left_.velocity = fric_speed_pid_[2].Calculate(
+        fric_target_speed_[2], param_motor_fric_back_left_.velocity, dt_);
+    cmd_fric_back_right_.velocity = fric_speed_pid_[3].Calculate(
+        fric_target_speed_[3], param_motor_fric_back_right_.velocity, dt_);
 
-  /**
-   * @brief 设置发射器模式
-   * @param mode 事件ID，对应 LauncherEvent
-   */
-  void SetMode(uint32_t mode) {
-    launcher_event_ = static_cast<LauncherEvent>(mode);
-  }
+    motor_fric_front_left_->Control(cmd_fric_front_left_);
+    motor_fric_front_right_->Control(cmd_fric_front_right_);
+    motor_fric_back_left_->Control(cmd_fric_back_left_);
+    motor_fric_back_right_->Control(cmd_fric_back_right_);
 
-  /**
-   * @brief 失控处理
-   */
+    trig_setpoint_speed_ =
+        trig_angle_pid_.Calculate(trig_setpoint_angle_, trig_angle_, dt_);
+
+    trig_output_ = trig_speed_pid_.Calculate(trig_setpoint_speed_,
+                                             param_trig_.velocity, dt_);
+    switch (trig_mod_) {
+      case TRIGMODE::RELAX:
+        cmd_trig_.velocity = 0;
+        break;
+      case TRIGMODE::SAFE:
+      case TRIGMODE::SINGLE:
+      case TRIGMODE::CONTINUE:
+        cmd_trig_.velocity = trig_output_;
+      default:
+        break;
+    }
+    motor_trig_->Control(cmd_trig_);
+  }
+  void HeatLimit() {
+    heat_ctrl_.heat_limit = referee_data_.heat_limit;
+    heat_ctrl_.heat_limit = 129.0f;  // for debug
+    heat_ctrl_.heat_increase = 100.0f;
+    heat_ctrl_.cooling_rate = referee_data_.cooling_rate;
+    heat_ctrl_.cooling_rate = 13.0f;  // for debug
+    if (fired_ >= 1) {
+      heat_ctrl_.heat += heat_ctrl_.heat_increase;
+      fired_ = 0;
+    }
+    heat_ctrl_.heat -=
+        heat_ctrl_.cooling_rate / (1 / dt_);  // 每个控制周期的冷却恢复
+    // heat_ctrl_.heat = std::clamp(heat_ctrl_.heat, 0.0f,
+    // heat_ctrl_.heat_limit);
+    heat_ctrl_.heat = std::max(heat_ctrl_.heat, 0.0f);
+    float available_float =
+        (this->heat_ctrl_.heat_limit - this->heat_ctrl_.heat) /
+        this->heat_ctrl_.heat_increase;
+    heat_ctrl_.available_shot = static_cast<uint32_t>(available_float);
+  }
   void LostCtrl() {
     // 重置所有发射相关的状态变量到初始模式
     launcher_event_ = LauncherEvent::SET_FRICMODE_SAFE;
@@ -380,6 +505,10 @@ class HeroLauncher {
 
   uint8_t delay_time_ = 0;
 
+  CMD* cmd_;
+  LibXR::Thread thread_;
+  LibXR::Semaphore semaphore_;
+  LibXR::Mutex mutex_;
   LauncherEvent launcher_event_ = LauncherEvent::SET_FRICMODE_RELAX;
 
   Motor::Feedback param_motor_fric_front_left_;
