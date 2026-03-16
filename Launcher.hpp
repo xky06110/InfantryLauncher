@@ -93,7 +93,7 @@ depends:
 #include "pid.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
-
+#include "Referee.hpp"
 #ifdef DEBUG
 #include "DebugCore.hpp"
 #include "ramfs.hpp"
@@ -213,12 +213,15 @@ class Launcher : public LibXR::Application {
 
   static void ThreadFunc(Launcher* self) {
     LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_sub("launcher_cmd");
+    LibXR::Topic::ASyncSubscriber<Referee::LauncherPack> launcher_ref(
+        "launcher_ref");
     cmd_sub.StartWaiting();
+    launcher_ref.StartWaiting();
     self->last_wakeup_time_ = LibXR::Timebase::GetMilliseconds();
     self->last_online_time_ = LibXR::Timebase::GetMicroseconds();
 
     while (true) {
-      LibXR::Thread::SleepUntil(self->last_wakeup_time_, 2);
+      LibXR::Thread::Sleep(2);
 
       auto now = LibXR::Timebase::GetMicroseconds();
       self->launcher_.SetControlDt((now - self->last_online_time_).ToSecondf());
@@ -228,7 +231,10 @@ class Launcher : public LibXR::Application {
         self->launcher_.launcher_cmd_ = cmd_sub.GetData();
         cmd_sub.StartWaiting();
       }
-
+      if(launcher_ref.Available()) {
+        self->launcher_.ref_data_ = launcher_ref.GetData();
+        launcher_ref.StartWaiting();
+      }
       self->mutex_.Lock();
       self->launcher_.Update();
       self->launcher_.Solve();

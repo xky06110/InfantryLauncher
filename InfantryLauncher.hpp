@@ -30,11 +30,11 @@ depends: []
 #include "message.hpp"
 #include "pid.hpp"
 #include "timebase.hpp"
-
+#include "Referee.hpp"
 namespace launcher::param {
 constexpr float TRIG_STEP = static_cast<float>(M_2PI) / 10.0f;
 constexpr float JAM_TORQUE = 0.1f;
-constexpr float FRIC_DROP_RPM = 50.0f;
+constexpr float FRIC_DROP_RPM = 70.0f;
 constexpr float JAM_TOGGLE_INTERVAL_SEC = 0.02f;
 constexpr float LONG_PRESS_THRESHOLD_SEC = 0.5f;
 constexpr float HEAT_TICK_SEC = 0.05f;
@@ -68,10 +68,6 @@ class InfantryLauncher {
     JAM,
   };
 
-  struct RefereeData {
-    float heat_limit;
-    float heat_cooling;
-  };
 
   struct LauncherParam {
     float fric1_setpoint_speed;
@@ -149,8 +145,6 @@ class InfantryLauncher {
   void Update() {
     last_online_time_ = LibXR::Timebase::GetMicroseconds();
 
-    referee_data_.heat_limit = 260.0f;
-    referee_data_.heat_cooling = 20.0f;
     heat_limit_.single_heat = 10.0f;
     heat_limit_.heat_threshold = 2.0f;
 
@@ -221,10 +215,10 @@ class InfantryLauncher {
                                     .reduction_ratio = 36.0f,
                                     .velocity = out_trig};
     auto cmd_fric_0 = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
-                                      .reduction_ratio = 19.0f,
+                                      .reduction_ratio = 1.0f,
                                       .velocity = out_fric_0};
     auto cmd_fric_1 = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
-                                      .reduction_ratio = 19.0f,
+                                      .reduction_ratio = 1.0f,
                                       .velocity = out_fric_1};
 
     auto motor_control = [&](Motor* motor, const Motor::Feedback& fb,
@@ -297,7 +291,7 @@ class InfantryLauncher {
 
   /* 外壳可直接写入的命令数据 */
   CMD::LauncherCMD launcher_cmd_{};  // NOLINT
-
+  Referee::LauncherPack ref_data_{};
  private:
   RMMotor* motor_fric_0_;
   RMMotor* motor_fric_1_;
@@ -350,7 +344,6 @@ class InfantryLauncher {
   TrigMode trig_mode_ = TrigMode::RELAX;
   TrigMode last_trig_mode_ = TrigMode::RELAX;
 
-  RefereeData referee_data_{.heat_limit = 0.0f, .heat_cooling = 0.0f};
   HeatLimit heat_limit_{
       .single_heat = 0.0f,
       .launched_num = 0.0f,
@@ -486,8 +479,9 @@ class InfantryLauncher {
               trig_angle_ + (is_reverse_ ? -2.0f * launcher::param::TRIG_STEP
                                          : launcher::param::TRIG_STEP);
           is_reverse_ = !is_reverse_;
-          last_jam_time_ = now;
+
         }
+        last_jam_time_ = now;
       } break;
     }
 
@@ -503,7 +497,12 @@ class InfantryLauncher {
     if (!shoot_active_) {
       return;
     }
-
+    static LibXR::MillisecondTimestamp  last_time_=0.0f;
+    auto delta_time =
+        (now - last_time_).ToSecondf();
+    if (delta_time  < 0.01f) {
+      return;}
+last_time_=now;
     bool success =
         (fabsf(param_fric_0_.velocity) <
          (param_.fric1_setpoint_speed - launcher::param::FRIC_DROP_RPM)) &&
@@ -575,24 +574,24 @@ class InfantryLauncher {
     heat_limit_.launched_num = 0.0f;
 
     if (heat_limit_.current_heat <
-        static_cast<float>(referee_data_.heat_cooling / 10.0f)) {
+        static_cast<float>(ref_data_.rs.shooter_cooling_value *launcher::param::HEAT_TICK_SEC)) {
       heat_limit_.current_heat = 0.0f;
     } else {
       heat_limit_.current_heat -=
-          static_cast<float>(referee_data_.heat_cooling / 10.0f);
+          static_cast<float>(ref_data_.rs.shooter_cooling_value*launcher::param::HEAT_TICK_SEC);
     }
 
-    float residuary_heat = referee_data_.heat_limit - heat_limit_.current_heat;
+    float residuary_heat = ref_data_.rs.shooter_heat_limit - heat_limit_.current_heat;
     heat_limit_.allow_fire = residuary_heat > heat_limit_.single_heat;
 
     if (!heat_limit_.allow_fire) {
-      trig_freq_ = referee_data_.heat_cooling / heat_limit_.single_heat;
+      trig_freq_ = ref_data_.rs.shooter_cooling_value / heat_limit_.single_heat;
       return;
     }
 
     if (residuary_heat <=
         heat_limit_.single_heat * heat_limit_.heat_threshold) {
-      float safe_freq = referee_data_.heat_cooling / heat_limit_.single_heat;
+      float safe_freq = ref_data_.rs.shooter_cooling_value / heat_limit_.single_heat;
       float ratio = residuary_heat /
                     (heat_limit_.single_heat * heat_limit_.heat_threshold);
       trig_freq_ = ratio * (param_.expect_trig_freq_ - safe_freq) + safe_freq;
@@ -645,8 +644,8 @@ class InfantryLauncher {
     out_fric_1 = pid_fric_1_.Calculate(target_rpm, param_fric_1_.velocity, dt);
 
     if (launcher_event_ == LauncherEvent::SET_FRICMODE_SAFE) {
-      pid_fric_0_.SetOutLimit(1.5f);
-      pid_fric_1_.SetOutLimit(1.5f);
+     out_fric_0/=50;
+     out_fric_1/=50;
     }
   }
 };
