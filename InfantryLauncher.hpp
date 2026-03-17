@@ -33,7 +33,7 @@ depends: []
 #include "Referee.hpp"
 namespace launcher::param {
 constexpr float TRIG_STEP = static_cast<float>(M_2PI) / 10.0f;
-constexpr float JAM_TORQUE = 0.1f;
+constexpr float JAM_TORQUE = 0.015f;
 constexpr float FRIC_DROP_RPM = 70.0f;
 constexpr float JAM_TOGGLE_INTERVAL_SEC = 0.02f;
 constexpr float LONG_PRESS_THRESHOLD_SEC = 0.5f;
