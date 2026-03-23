@@ -34,8 +34,8 @@ depends: []
 namespace launcher::param {
 constexpr float TRIG_STEP = static_cast<float>(M_2PI) / 10.0f;
 constexpr float JAM_TORQUE = 0.015f;
-constexpr float FRIC_DROP_RPM = 70.0f;
-constexpr float JAM_TOGGLE_INTERVAL_SEC = 0.02f;
+constexpr float FRIC_DROP_RPM = 218.0f;
+constexpr float JAM_TOGGLE_INTERVAL_SEC = 0.08f;
 constexpr float LONG_PRESS_THRESHOLD_SEC = 0.5f;
 constexpr float HEAT_TICK_SEC = 0.05f;
 }  // namespace launcher::param
@@ -145,8 +145,6 @@ class InfantryLauncher {
   void Update() {
     last_online_time_ = LibXR::Timebase::GetMicroseconds();
 
-    heat_limit_.single_heat = 10.0f;
-    heat_limit_.heat_threshold = 2.0f;
 
     motor_fric_0_->Update();
     motor_fric_1_->Update();
@@ -296,8 +294,8 @@ class InfantryLauncher {
   RMMotor* motor_fric_0_;
   RMMotor* motor_fric_1_;
   RMMotor* motor_trig_;
-
-  Motor::Feedback param_fric_0_{};
+  float residuary_heat=0;
+   Motor::Feedback param_fric_0_{};
   Motor::Feedback param_fric_1_{};
   Motor::Feedback param_trig_{};
 
@@ -345,12 +343,13 @@ class InfantryLauncher {
   TrigMode last_trig_mode_ = TrigMode::RELAX;
 
   HeatLimit heat_limit_{
-      .single_heat = 0.0f,
+      .single_heat = 10.0f,
       .launched_num = 0.0f,
       .current_heat = 0.0f,
-      .heat_threshold = 0.0f,
+      .heat_threshold = 2.30f,
       .allow_fire = true,
   };
+
 
   /*-----------------工具函数---------------------------------------------------*/
 
@@ -360,10 +359,10 @@ class InfantryLauncher {
    * RELAX/STOP/NORMAL/JAMMED。
    */
   void UpdateLauncherState() {
-    if (fabsf(param_trig_.torque) > launcher::param::JAM_TORQUE) {
-      launcher_state_ = LauncherState::JAMMED;
-      return;
-    }
+    // if (fabsf(param_trig_.torque) > launcher::param::JAM_TORQUE) {
+    //   launcher_state_ = LauncherState::JAMMED;
+    //   return;
+    // }
 
     if (launcher_event_ != LauncherEvent::SET_FRICMODE_READY) {
       launcher_state_ = LauncherState::RELAX;
@@ -498,11 +497,6 @@ class InfantryLauncher {
       return;
     }
     static LibXR::MillisecondTimestamp  last_time_=0.0f;
-    auto delta_time =
-        (now - last_time_).ToSecondf();
-    if (delta_time  < 0.01f) {
-      return;}
-last_time_=now;
     bool success =
         (fabsf(param_fric_0_.velocity) <
          (param_.fric1_setpoint_speed - launcher::param::FRIC_DROP_RPM)) &&
@@ -567,40 +561,52 @@ last_time_=now;
     if (delta_time < launcher::param::HEAT_TICK_SEC) {
       return;
     }
-    last_heat_time_ = now;
+    /*每周期都计算此周期的剩余热量*/
 
+    last_heat_time_ = now;
     heat_limit_.current_heat +=
         heat_limit_.single_heat * heat_limit_.launched_num;
-    heat_limit_.launched_num = 0.0f;
+
+    heat_limit_.launched_num = 0;
 
     if (heat_limit_.current_heat <
-        static_cast<float>(ref_data_.rs.shooter_cooling_value *launcher::param::HEAT_TICK_SEC)) {
-      heat_limit_.current_heat = 0.0f;
+        (static_cast<float>(ref_data_.rs.shooter_cooling_value *
+                            launcher::param::HEAT_TICK_SEC))) {
+      heat_limit_.current_heat = 0;
     } else {
-      heat_limit_.current_heat -=
-          static_cast<float>(ref_data_.rs.shooter_cooling_value*launcher::param::HEAT_TICK_SEC);
+      heat_limit_.current_heat -= static_cast<float>(
+          ref_data_.rs.shooter_cooling_value * launcher::param::HEAT_TICK_SEC);
     }
 
-    float residuary_heat = ref_data_.rs.shooter_heat_limit - heat_limit_.current_heat;
-    heat_limit_.allow_fire = residuary_heat > heat_limit_.single_heat;
+    float residuary_heat =
+        ref_data_.rs.shooter_heat_limit -
+        heat_limit_.current_heat;
 
-    if (!heat_limit_.allow_fire) {
-      trig_freq_ = ref_data_.rs.shooter_cooling_value / heat_limit_.single_heat;
-      return;
+    /*控制control里的launcherstate*/
+    if (residuary_heat > heat_limit_.single_heat) {
+      heat_limit_.allow_fire = true;
+    } else {
+      heat_limit_.allow_fire = false;
     }
+    /*不同剩余热量启用不同实际弹频*/
+    if (heat_limit_.allow_fire) {
+      if (residuary_heat <= heat_limit_.single_heat ) {
+        trig_freq_ = ref_data_.rs.shooter_cooling_value / heat_limit_.single_heat;
+      }
+       else if (residuary_heat <=
+                 heat_limit_.single_heat * heat_limit_.heat_threshold) {
+        float safe_freq = ref_data_.rs.shooter_cooling_value / heat_limit_.single_heat;
+        trig_freq_ = (residuary_heat /
+                      (heat_limit_.single_heat * heat_limit_.heat_threshold)) *
+                         (param_.expect_trig_freq_ - safe_freq) +
+                     safe_freq;
 
-    if (residuary_heat <=
-        heat_limit_.single_heat * heat_limit_.heat_threshold) {
-      float safe_freq = ref_data_.rs.shooter_cooling_value / heat_limit_.single_heat;
-      float ratio = residuary_heat /
-                    (heat_limit_.single_heat * heat_limit_.heat_threshold);
-      trig_freq_ = ratio * (param_.expect_trig_freq_ - safe_freq) + safe_freq;
-      return;
+      }
+      else {
+        trig_freq_ = param_.expect_trig_freq_;
+      }
     }
-
-    trig_freq_ = param_.expect_trig_freq_;
   }
-
   /**
    * @brief 发布调试与统计话题
    * @details 发布发射等待时间、累计发射数和当前弹频。
@@ -644,8 +650,8 @@ last_time_=now;
     out_fric_1 = pid_fric_1_.Calculate(target_rpm, param_fric_1_.velocity, dt);
 
     if (launcher_event_ == LauncherEvent::SET_FRICMODE_SAFE) {
-     out_fric_0/=50;
-     out_fric_1/=50;
+     out_fric_0/=50.0f;
+     out_fric_1/=50.0f;
     }
   }
 };
