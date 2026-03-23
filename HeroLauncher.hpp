@@ -219,6 +219,7 @@ class HeroLauncher {
    * @details 更新热量限制，更新拨弹状态机。
    */
   void Solve() {
+    SoftStart();
     HeatLimit();
     UpdateTrigMode();
     UpdateFricTarget();
@@ -298,7 +299,7 @@ class HeroLauncher {
     // 重置延迟计算
     real_launch_delay_ = 0.0f;
 
-    soft_start_finish = false;
+    soft_start_finish_ = false;
   }
   /**
    * @brief 重置发射器状态
@@ -325,7 +326,7 @@ class HeroLauncher {
 
     delay_time_ = 0;
 
-    soft_start_finish = false;
+    soft_start_finish_ = false;
   }
 
   void OnMonitor() {}
@@ -352,7 +353,7 @@ class HeroLauncher {
 
   bool first_loading_ = true;
 
-  bool soft_start_finish = false;
+  bool soft_start_finish_ = false;
 
   float dt_ = 0.0f;
 
@@ -478,10 +479,7 @@ class HeroLauncher {
         fric_target_speed_[1] = 0;
         fric_target_speed_[2] = 0;
         fric_target_speed_[3] = 0;
-        for (LibXR::PID<float>& i : fric_speed_pid_) {
-          i.SetOutLimit(0.1f);
-        }
-        soft_start_finish = false;
+        soft_start_finish_ = false;
         Reset();
         break;
       case LauncherEvent::SET_FRICMODE_READY:
@@ -489,14 +487,6 @@ class HeroLauncher {
         fric_target_speed_[1] = param_.fric2_setpoint_speed;
         fric_target_speed_[2] = param_.fric1_setpoint_speed;
         fric_target_speed_[3] = param_.fric1_setpoint_speed;
-        if (motor_fric_back_left_->GetFeedback().velocity >
-            param_.fric1_setpoint_speed) {
-          fric_speed_pid_[0].SetOutLimit(1.0f);
-          fric_speed_pid_[1].SetOutLimit(1.0f);
-          fric_speed_pid_[2].SetOutLimit(0.8f);
-          fric_speed_pid_[3].SetOutLimit(0.8f);
-          soft_start_finish = true;
-        }
         break;
       default:
         break;
@@ -521,7 +511,7 @@ class HeroLauncher {
       delay_time_++;
     }
 
-    if(soft_start_finish){
+    if (soft_start_finish_) {
       if (std::abs(param_motor_fric_back_left_.torque) > 0.04) {  // 发弹检测
         trig_zero_angle_ = trig_angle_;  // 获取电机当前位置
         trig_setpoint_angle_ = trig_angle_ - TRIG_ZERO_ANGLE_OFFSET;  // 偏移量
@@ -618,6 +608,25 @@ class HeroLauncher {
         break;
     }
     motor_trig_->Control(cmd_trig_);
+  }
+  void SoftStart() {
+    if (!soft_start_finish_) {
+      // 未达到目标速度前，保持小输出限制（缓启动）
+      for (LibXR::PID<float>& i : fric_speed_pid_) {
+        i.SetOutLimit(0.05f);
+      }
+
+      // 检测是否达到目标速度
+      if (motor_fric_back_left_->GetFeedback().velocity >
+          param_.fric1_setpoint_speed) {
+        soft_start_finish_ = true;
+      }
+    } else {
+      // 已达到目标速度，解除输出限制
+      for (LibXR::PID<float>& i : fric_speed_pid_) {
+        i.SetOutLimit(1.0f);
+      }
+    }
   }
 
   /**
