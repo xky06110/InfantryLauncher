@@ -88,7 +88,7 @@ depends:
 #include "libxr_time.hpp"
 #include "pid.hpp"
 #include "timebase.hpp"
-
+#include "Referee.hpp"
 #ifdef DEBUG
 #include "DebugCore.hpp"
 #include "ramfs.hpp"
@@ -319,7 +319,7 @@ class HeroLauncher {
 
   /* 外壳可直接写入的命令数据 */
   CMD::LauncherCMD launcher_cmd_;  // NOLINT
-
+  Referee::LauncherPack ref_data_{};
  private:
   LauncherParam param_;
   RefereeData referee_data_;
