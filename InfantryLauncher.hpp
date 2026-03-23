@@ -359,10 +359,10 @@ class InfantryLauncher {
    * RELAX/STOP/NORMAL/JAMMED。
    */
   void UpdateLauncherState() {
-    // if (fabsf(param_trig_.torque) > launcher::param::JAM_TORQUE) {
-    //   launcher_state_ = LauncherState::JAMMED;
-    //   return;
-    // }
+    if (fabsf(param_trig_.torque) > launcher::param::JAM_TORQUE) {
+      launcher_state_ = LauncherState::JAMMED;
+      return;
+    }
 
     if (launcher_event_ != LauncherEvent::SET_FRICMODE_READY) {
       launcher_state_ = LauncherState::RELAX;
