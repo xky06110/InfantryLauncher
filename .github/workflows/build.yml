@@ -115,6 +115,7 @@ jobs:
           xrobot_add_mod RMMotor --instance-id motor_fric_back_right
           xrobot_add_mod RMMotor --instance-id motor_trig
           xrobot_add_mod CMD --instance-id cmd
+          xrobot_add_mod Referee --instance-id referee
 
       - name: Add this repo module
         run: |
