@@ -79,7 +79,7 @@ jobs:
           repository: QDU-Robomaster/DebugCore
           path: Modules/DebugCore
 
-   - name: Checkout Referee module
+      - name: Checkout Referee module
         uses: actions/checkout@v4
         with:
           repository: QDU-Robomaster/Referee
