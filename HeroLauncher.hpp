@@ -82,6 +82,7 @@ depends:
 #include "CMD.hpp"
 #include "Motor.hpp"
 #include "RMMotor.hpp"
+#include "Referee.hpp"
 #include "app_framework.hpp"
 #include "cycle_value.hpp"
 #include "libxr_def.hpp"
@@ -608,8 +609,8 @@ class HeroLauncher {
     }
     motor_trig_->Control(cmd_trig_);
   }
-  
-    /**
+
+  /**
    * @brief 摩擦轮软启动控制
    * @details 在摩擦轮启动初期限制 PID 输出，防止电流冲击；
    *          当实际转速达到设定值后解除输出限制。
