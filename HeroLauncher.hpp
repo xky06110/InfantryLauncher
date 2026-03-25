@@ -149,6 +149,7 @@ class HeroLauncher {
     uint8_t num_trig_tooth;
     /*弹频*/
     float trig_freq;
+    uint8_t fric_num;
   };
 
   /**
