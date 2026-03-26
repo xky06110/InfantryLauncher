@@ -63,6 +63,7 @@ class Launcher : public LibXR::Application {
   using LauncherEvent = typename LauncherType::LauncherEvent;
   static constexpr int FRIC_NUM = 2;
   struct LauncherParam {
+
     std::array<float, FRIC_NUM> fric_setpoint_speed;
     float trig_gear_ratio;
     uint8_t num_trig_tooth;
@@ -71,6 +72,7 @@ class Launcher : public LibXR::Application {
     std::array<LibXR::PID<float>::Param, FRIC_NUM> fric_actuator_;
     RMMotor* trig_motor_;
     std::array<RMMotor*, FRIC_NUM> fric_motor_;
+
   };
 
   Launcher(
@@ -83,7 +85,7 @@ class Launcher : public LibXR::Application {
                       .trig_gear_ratio = launcher_param.trig_gear_ratio,
                       .num_trig_tooth = launcher_param.num_trig_tooth,
                       .expect_trig_freq_ =
-                          launcher_param.trig_freq_,  // 关键：字段名映射
+                          launcher_param.trig_freq_,  
                       .trig_actuator_ = launcher_param.trig_actuator_,
                       .fric_actuator_ = launcher_param.fric_actuator_,
                       .trig_motor_ = launcher_param.trig_motor_,

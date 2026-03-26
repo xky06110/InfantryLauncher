@@ -113,11 +113,12 @@ class InfantryLauncher {
    * @param cmd CMD模块指针
    */
   InfantryLauncher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-                   uint32_t task_stack_depth, LauncherParam launch_param,
-                   CMD* cmd)
-      : param_(launch_param),
-        trig_pid_angle(launch_param.trig_actuator_[0]),
-        trig_pid_speed(launch_param.trig_actuator_[1]),fric_pid_0(launch_param.fric_actuator_[0]),fric_pid_1(launch_param.fric_actuator_[1]) {
+                   uint32_t task_stack_depth,
+                  LauncherParam launch_param, CMD* cmd)
+      : trig_pid_angle(launch_param.trig_actuator_[0]),
+        trig_pid_speed(launch_param.trig_actuator_[1]),
+        fric_pid_0(launch_param.fric_actuator_[0]),
+        fric_pid_1(launch_param.fric_actuator_[1]) {
     last_online_time_ = LibXR::Timebase::GetMicroseconds();
     last_heat_time_ = LibXR::Timebase::GetMilliseconds();
   }
@@ -283,7 +284,7 @@ for (int i = 0; i < FRIC_NUM; i++) {
   LibXR::PID<float> fric_pid_0;
   LibXR::PID<float> fric_pid_1;
 
-  LauncherParam param_;
+LauncherParam param_;
 
   float dt_ = 0.0f;
   std::array<float, FRIC_NUM> target_rpm_ = {0.0f, 0.0f};
