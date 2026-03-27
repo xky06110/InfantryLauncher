@@ -11,7 +11,7 @@ constructor_args:
       trig_gear_ratio: 36.0
       num_trig_tooth: 10
       expect_trig_freq_: 16.0
-      trig_actuator_0:
+      pid_trig_angle_:
         k: 1.0
         p: 40.0
         i: 0.1
@@ -19,7 +19,7 @@ constructor_args:
         i_limit: 0.0
         out_limit: 0.0
         cycle: false
-      trig_actuator_1:
+      pid_trig_speed_:
         k: 1.0
         p: 0.15
         i: 0.0
@@ -27,7 +27,7 @@ constructor_args:
         i_limit: 0.0
         out_limit: 0.0
         cycle: false
-      fric_actuator_0:
+      pid_fric_0:
         k: 0.8
         p: 0.0003
         i: 0.0
@@ -35,7 +35,7 @@ constructor_args:
         i_limit: 0.0
         out_limit: 0.6
         cycle: false
-      fric_actuator_1:
+      pid_fric_1:
         k: 0.8
         p: 0.0003
         i: 0.0

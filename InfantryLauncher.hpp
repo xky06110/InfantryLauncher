@@ -87,8 +87,6 @@ class InfantryLauncher {
     float heat_cooling;
   } RefereeData;
 
-
-
   struct HeatLimit {
     float single_heat;
     float launched_num;
@@ -132,7 +130,7 @@ class InfantryLauncher {
         trig_pid_speed(launch_param.pid_trig_speed_),
         fric_pid_0(launch_param.pid_fric_0),
         fric_pid_1(launch_param.pid_fric_1) {
-        
+
     timer_.last_online_time_ = LibXR::Timebase::GetMicroseconds();
     timer_.last_heat_time_ = LibXR::Timebase::GetMilliseconds();
   }
