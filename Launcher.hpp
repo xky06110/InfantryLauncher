@@ -2,7 +2,8 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: No description provided
+module_name: Launcher
+module_description: Template launcher module supporting InfantryLauncher and HeroLauncher types
 constructor_args:
   - task_stack_depth: 1536
   - launcher_param:
@@ -61,36 +62,14 @@ template <class LauncherType>
 class Launcher : public LibXR::Application {
  public:
   using LauncherEvent = typename LauncherType::LauncherEvent;
-  static constexpr int FRIC_NUM = 2;
-  struct LauncherParam {
-
-    std::array<float, FRIC_NUM> fric_setpoint_speed;
-    float trig_gear_ratio;
-    uint8_t num_trig_tooth;
-    float trig_freq_;
-    std::array<LibXR::PID<float>::Param, 2> trig_actuator_;
-    std::array<LibXR::PID<float>::Param, FRIC_NUM> fric_actuator_;
-    RMMotor* trig_motor_;
-    std::array<RMMotor*, FRIC_NUM> fric_motor_;
-
-  };
+  static constexpr int FRIC_NUM = LauncherType::FRIC_NUM;
+  using LauncherParam = typename LauncherType::LauncherParam;
 
   Launcher(
       LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
       uint32_t task_stack_depth, LauncherParam launcher_param, CMD* cmd,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH)
-      : launcher_(hw, app, task_stack_depth,
-                  typename LauncherType::LauncherParam{
-                      .fric_setpoint_speed = launcher_param.fric_setpoint_speed,
-                      .trig_gear_ratio = launcher_param.trig_gear_ratio,
-                      .num_trig_tooth = launcher_param.num_trig_tooth,
-                      .expect_trig_freq_ =
-                          launcher_param.trig_freq_,  
-                      .trig_actuator_ = launcher_param.trig_actuator_,
-                      .fric_actuator_ = launcher_param.fric_actuator_,
-                      .trig_motor_ = launcher_param.trig_motor_,
-                      .fric_motor_ = launcher_param.fric_motor_},
-                  cmd)
+      : launcher_(hw, app, task_stack_depth, launcher_param, cmd)
 #ifdef DEBUG
         ,
         cmd_file_(LibXR::RamFS::CreateFile(
