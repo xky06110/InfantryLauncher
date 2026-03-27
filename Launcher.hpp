@@ -10,13 +10,39 @@ constructor_args:
       fric_setpoint_speed: [6500.0, 0.0]
       trig_gear_ratio: 36.0
       num_trig_tooth: 10
-      trig_freq_: 16.0
-      trig_actuator_:
-        - {k: 1.0, p: 40.0, i: 0.1, d: 0.0, i_limit: 0.0, out_limit: 0.0, cycle: false}
-        - {k: 1.0, p: 0.15, i: 0.0, d: 0.0, i_limit: 0.0, out_limit: 0.0, cycle: false}
-      fric_actuator_:
-        - {k: 0.8, p: 0.0003, i: 0.0, d: 0.0, i_limit: 0.0, out_limit: 0.6, cycle: false}
-        - {k: 0.8, p: 0.0003, i: 0.0, d: 0.0, i_limit: 0.0, out_limit: 0.6, cycle: false}
+      expect_trig_freq_: 16.0
+      trig_actuator_0:
+        k: 1.0
+        p: 40.0
+        i: 0.1
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.0
+        cycle: false
+      trig_actuator_1:
+        k: 1.0
+        p: 0.15
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.0
+        cycle: false
+      fric_actuator_0:
+        k: 0.8
+        p: 0.0003
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.6
+        cycle: false
+      fric_actuator_1:
+        k: 0.8
+        p: 0.0003
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.6
+        cycle: false
       trig_motor_: '@&motor_trig'
       fric_motor_:
         - '@&motor_fric_0'
