@@ -123,13 +123,18 @@ class InfantryLauncher {
    * @param launch_param 发射机构参数
    * @param cmd CMD模块指针
    */
-  InfantryLauncher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+   InfantryLauncher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
                    uint32_t task_stack_depth, LauncherParam launch_param,
                    CMD* cmd)
       : trig_pid_angle(launch_param.pid_trig_angle_),
         trig_pid_speed(launch_param.pid_trig_speed_),
         fric_pid_0(launch_param.pid_fric_0),
-        fric_pid_1(launch_param.pid_fric_1) {
+        fric_pid_1(launch_param.pid_fric_1),
+        param_(launch_param) {
+    UNUSED(hw);
+    UNUSED(app);
+    UNUSED(task_stack_depth);
+    UNUSED(cmd);
 
     timer_.last_online_time_ = LibXR::Timebase::GetMicroseconds();
     timer_.last_heat_time_ = LibXR::Timebase::GetMilliseconds();
