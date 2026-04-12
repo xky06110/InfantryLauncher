@@ -656,7 +656,8 @@ class InfantryLauncher {
     }
     last_heat_time_ = now;
 
-    float residuary_heat = ref_data_.heat_limit - heat_limit_.current_heat-heat_limit_.merge;
+    float residuary_heat =
+        ref_data_.heat_limit - heat_limit_.current_heat - heat_limit_.merge;
     /*热量限制阈值阈值，当剩余热量低于阈值时，不允许发射*/
     heat_limit_.allow_fire = (residuary_heat > heat_limit_.merge);
 
@@ -735,10 +736,10 @@ class InfantryLauncher {
           heat_limit_.merge = 0;
           expect_trig_freq_ = 18;
           /*弥补误差*/
-          if (!last_fire_notify_&&launcher_cmd_.isfire) {
+          if (!last_fire_notify_ && launcher_cmd_.isfire) {
             heat_limit_.current_heat += 10;
-            }
-          if(launcher_cmd_.isfire){
+          }
+          if (launcher_cmd_.isfire) {
             if ((now - last_add_time_).ToSecondf() > 8.0f) {
               heat_limit_.current_heat += 5;
               last_add_time_ = now;
