@@ -7,14 +7,14 @@ constructor_args:
   - motor_fric_front_left: '@&motor_fric_0'
   - motor_fric_front_right: '@&motor_fric_1'
   - motor_trig: '@&motor_trig'
-  - task_stack_depth: 4096
+  - task_stack_depth: 2048
   - pid_trig_angle:
       k: 1.0
-      p: 4000.0
+      p: 40.0
       i: 0.0
       d: 0.0
       i_limit: 0.0
-      out_limit: 4000.0
+      out_limit: 0.0
       cycle: false
   - pid_trig_speed:
       k: 1.0
@@ -83,11 +83,17 @@ depends:
 namespace launcher::param {
 constexpr float TRIG_STEP = static_cast<float>(M_2PI) / 10.0f;
 constexpr float JAM_TORQUE = 0.025f;
-constexpr float JAM_TOGGLE_INTERVAL_SEC = 0.02f;
+constexpr float JAM_TOGGLE_INTERVAL_SEC = 0.05f;
 constexpr float LONG_PRESS_THRESHOLD_SEC = 0.5f;
 constexpr float HEAT_TICK_SEC = 0.05f;
 constexpr float SHOT_PROGRESS_EPSILON = 1e-4f;
-constexpr float TRIGGER_SETTLE_ANGLE = 0.2f * TRIG_STEP;
+constexpr float TRIGGER_SETTLE_ANGLE = 0.20f * TRIG_STEP;
+// 单发限位参数.
+// 首发靠摩擦轮掉速确认, 后续按齿位索引发射.
+constexpr float SINGLE_LIMIT_DROP_RPM = 125.0f;
+constexpr float SINGLE_LIMIT_MIN_READY_RATIO = 0.92f;
+constexpr float SINGLE_LIMIT_REARM_SEC = 0.08f;
+constexpr float SINGLE_LIMIT_PROBE_TIMEOUT_SEC = 0.25f;
 }  // namespace launcher::param
 
 /**
@@ -118,8 +124,8 @@ class InfantryLauncher {
     JAM,
   };
   struct RefereeData {
-    float cooling_rate = 0.0f;
-    float heat_limit = 0.0f;
+    float cooling_rate = 20.0f;
+    float heat_limit = 260.0f;
     float current_heat_17 = 0.0f;
   };
 
@@ -240,13 +246,10 @@ class InfantryLauncher {
         "launcher_ref");
     cmd_sub.StartWaiting();
     launcher_ref.StartWaiting();
-    self->last_wakeup_time_ = LibXR::Timebase::GetMilliseconds();
-    self->last_online_time_ = LibXR::Timebase::GetMicroseconds();
     while (true) {
-      auto now = LibXR::Timebase::GetMicroseconds();
-      self->SetControlDt((now - self->last_online_time_).ToSecondf());
+      auto now = LibXR::Timebase::GetMilliseconds();
+      self->dt_ = (now - self->last_online_time_).ToSecondf();
       self->last_online_time_ = now;
-
       if (cmd_sub.Available()) {
         self->launcher_cmd_ = cmd_sub.GetData();
         cmd_sub.StartWaiting();
@@ -275,9 +278,7 @@ class InfantryLauncher {
    * @details 更新周期时间、电机反馈、拨弹角度，并刷新发射器总状态。
    */
   void Update() {
-    last_online_time_ = LibXR::Timebase::GetMicroseconds();
     heat_limit_.single_heat = 10.0f;
-    robot_level = 5;
     motor_fric_0_->Update();
     motor_fric_1_->Update();
     motor_trig_->Update();
@@ -355,8 +356,6 @@ class InfantryLauncher {
     motor_control(motor_fric_1_, fric_1_fb, cmd_fric_1);
   }
 
-  void SetControlDt(float dt) { dt_ = dt; }
-
   /**
    * @brief 设置摩擦轮模式事件
    * @param mode 事件ID，对应 LauncherEvent
@@ -388,6 +387,8 @@ class InfantryLauncher {
     shoot_active_ = false;
     press_continue_ = false;
     launcher_cmd_.isfire = false;
+    single_limit_probe_active_ = false;
+    SyncSingleLimitIndexFromAngle();
 
     motor_trig_->Disable();
     motor_fric_0_->Relax();
@@ -416,7 +417,6 @@ class InfantryLauncher {
   RMMotor* motor_fric_0_;
   RMMotor* motor_fric_1_;
   RMMotor* motor_trig_;
-  float last_trig_angle;
   Motor::Feedback param_fric_0_{};
   Motor::Feedback param_fric_1_{};
   Motor::Feedback param_trig_{};
@@ -429,11 +429,11 @@ class InfantryLauncher {
   LauncherParam param_;
   LibXR::Event launcher_event;
   LibXR::Thread thread_;
-  uint8_t robot_level; /* 机器人等级 */
+  uint8_t robot_level = 5; /* 机器人等级 */
 
   float out_trig_ = 0.0f;
 
-  float expect_trig_freq_;
+  float expect_trig_freq_ = 10.0f;
   float dt_ = 0.0f;
   float target_rpm_ = 0.0f;
   float trig_freq_ = 0.0f;
@@ -451,18 +451,29 @@ class InfantryLauncher {
   bool shoot_active_ = false;
   bool heat_initialized_ = false;
   bool trigger_step_active_ = false;
+  // 首发校准后的齿位索引状态.
+  bool single_limit_base_valid_ = false;
+  bool single_limit_probe_active_ = false;
+  bool single_limit_target_active_ = false;
 
   float jam_keep_time_s_ = 0.0f;
   float shot_progress_ = 0.0f;
+  float single_limit_base_angle_ = 0.0f;
+  float fric_peak_rpm_ = 0.0f;
+  int32_t single_limit_done_index_ = 0;
+  int32_t single_limit_target_index_ = 0;
+  // 延后到 CurrentHeat() 统一结算的已确认发数.
+  // int32_t pending_heat_shots_ = 0;
 
+  float last_trig_angle = 0.0f;
   LibXR::MillisecondTimestamp fire_press_time_ = 0;
   LibXR::MillisecondTimestamp last_trig_time_ = 0;
   LibXR::MillisecondTimestamp last_jam_time_ = 0;
   LibXR::MillisecondTimestamp last_heat_time_ = 0;
   LibXR::MillisecondTimestamp last_check_time_ = 0;
-  LibXR::MicrosecondTimestamp last_online_time_ = 0;
-  LibXR::MillisecondTimestamp shot_start_time_ = 0;
-  LibXR::MillisecondTimestamp last_add_time_ = 0;
+  LibXR::MillisecondTimestamp last_shot_confirm_time_ = 0;
+  LibXR::MillisecondTimestamp single_limit_probe_start_time_ = 0;
+  LibXR::MillisecondTimestamp last_online_time_ = 0;
   LibXR::MillisecondTimestamp last_wakeup_time_ = 0;
 
   LauncherEvent launcher_event_ = LauncherEvent::SET_FRICMODE_RELAX;
@@ -471,10 +482,10 @@ class InfantryLauncher {
   TrigMode last_trig_mode_ = TrigMode::RELAX;
 
   HeatLimit heat_limit_{
-      .single_heat = 0.0f,
+      .single_heat = 10.0f,
       .launched_num = 0.0f,
       .current_heat = 0.0f,
-      .heat_threshold = 0.0f,
+      .heat_threshold = 2.0f,
       .allow_fire = true,
       .merge = 0.0f,
   };
@@ -518,6 +529,7 @@ class InfantryLauncher {
     auto now = LibXR::Timebase::GetMilliseconds();
     UpdateTriggerMode(now);
     UpdateTriggerSetpoint(now);
+    SingleLimit(now);
     CurrentHeat(now);
     UpdateHeatControl(now);
 
@@ -572,24 +584,58 @@ class InfantryLauncher {
       float angle_error = fabsf(target_trig_angle_ - trig_angle_);
       if (angle_error <= launcher::param::TRIGGER_SETTLE_ANGLE) {
         trigger_step_active_ = false;
+        // 只有拨盘真正到位后才记一发.
+        if (single_limit_base_valid_ && single_limit_target_active_) {
+          single_limit_done_index_ = single_limit_target_index_;
+          single_limit_target_active_ = false;
+          last_trig_time_ = now;
+        }
+
+        if (!single_limit_base_valid_) {
+          single_limit_probe_active_ = false;
+        }
       }
     }
 
     switch (trig_mode_) {
       case TrigMode::RELAX:
+        motor_trig_->Relax();
+        trigger_step_active_ = false;
+        shoot_active_ = false;
+        single_limit_probe_active_ = false;
+        break;
       case TrigMode::SAFE:
         target_trig_angle_ = trig_angle_;
         trigger_step_active_ = false;
         shoot_active_ = false;
+        if (launcher_event_ != LauncherEvent::SET_FRICMODE_READY) {
+          single_limit_probe_active_ = false;
+        }
         break;
 
       case TrigMode::SINGLE:
         if (last_trig_mode_ == TrigMode::SAFE ||
             last_trig_mode_ == TrigMode::RELAX ||
             last_trig_mode_ == TrigMode::JAM) {
-          target_trig_angle_ += launcher::param::TRIG_STEP;
-          trigger_step_active_ = true;
-          shoot_active_ = true;
+          if (single_limit_base_valid_) {
+            // 已校准后按齿位单发.
+            if (single_limit_target_active_) {
+              if (last_trig_mode_ == TrigMode::SAFE ||
+                  last_trig_mode_ == TrigMode::RELAX ||
+                  last_trig_mode_ == TrigMode::JAM) {
+                RestoreSingleLimitTarget();
+              }
+
+              ScheduleSingleLimitTarget(single_limit_done_index_ + 1);
+            }
+          } else {
+            // 未校准时先开环走一齿并开启首发探测.
+            target_trig_angle_ += launcher::param::TRIG_STEP;
+            trigger_step_active_ = true;
+            shoot_active_ = true;
+            single_limit_probe_active_ = true;
+            single_limit_probe_start_time_ = now;
+          }
         }
         break;
 
@@ -597,17 +643,32 @@ class InfantryLauncher {
         float trig_freq = std::max(trig_freq_, 1e-3f);
         float interval_s = 1.0f / trig_freq;
         float since_last = (now - last_trig_time_).ToSecondf();
-        if (!trigger_step_active_ && since_last >= interval_s) {
+        if (single_limit_base_valid_) {
+          // 连发仍按齿位推进, trig_freq_ 只决定节拍.
+          if (single_limit_target_active_ &&
+              (last_trig_mode_ == TrigMode::SAFE ||
+               last_trig_mode_ == TrigMode::RELAX ||
+               last_trig_mode_ == TrigMode::JAM)) {
+            RestoreSingleLimitTarget();
+          }
+          if (!single_limit_target_active_ && since_last >= interval_s) {
+            ScheduleSingleLimitTarget(single_limit_done_index_ + 1);
+          }
+        } else if (since_last >= interval_s) {
           target_trig_angle_ += launcher::param::TRIG_STEP;
           trigger_step_active_ = true;
           last_trig_time_ = now;
           shoot_active_ = true;
+          single_limit_probe_active_ = true;
+          single_limit_probe_start_time_ = now;
         }
       } break;
 
       case TrigMode::JAM: {
+        // 退弹时关闭探测, 避免误判出弹.
         trigger_step_active_ = false;
         shoot_active_ = false;
+        single_limit_probe_active_ = false;
         jam_keep_time_s_ = (now - last_jam_time_).ToSecondf();
         if (jam_keep_time_s_ >= launcher::param::JAM_TOGGLE_INTERVAL_SEC) {
           if (last_trig_mode_ != TrigMode::JAM) {
@@ -617,8 +678,9 @@ class InfantryLauncher {
               trig_angle_ + (is_reverse_ ? -0.80f * launcher::param::TRIG_STEP
                                          : launcher::param::TRIG_STEP);
           is_reverse_ = !is_reverse_;
+          last_jam_time_ = now;
         }
-        last_jam_time_ = now;
+
       } break;
     }
 
@@ -676,6 +738,7 @@ class InfantryLauncher {
 
     trig_freq_ = expect_trig_freq_;
   }
+
   void CurrentHeat(LibXR::MillisecondTimestamp now) {
     float delta_time = (now - last_check_time_).ToSecondf();
 
@@ -731,19 +794,9 @@ class InfantryLauncher {
         case 3:
         case 4:
         case 5: {
-          heat_limit_.heat_threshold = 3.0f;
-          heat_limit_.merge = 0;
+          heat_limit_.heat_threshold = 6.0f;
+          heat_limit_.merge = 10;
           expect_trig_freq_ = 18;
-          /*弥补误差*/
-          if (!last_fire_notify_ && launcher_cmd_.isfire) {
-            heat_limit_.current_heat += 10;
-          }
-          if (launcher_cmd_.isfire) {
-            if ((now - last_add_time_).ToSecondf() > 8.0f) {
-              heat_limit_.current_heat += 5;
-              last_add_time_ = now;
-            }
-          }
         } break;
         default:
           break;
@@ -753,25 +806,15 @@ class InfantryLauncher {
         case 1:
         case 2: {
           expect_trig_freq_ = 6;
-          heat_limit_.heat_threshold = 2.0f;
+          heat_limit_.heat_threshold = 3.0f;
           heat_limit_.merge = 0;
-          /*冷却优先总热量低，每次开始发射提供双发容错*/
-          if (last_fire_notify_ != true && (launcher_cmd_.isfire) == true) {
-            heat_limit_.current_heat += 10;
-            shot_start_time_ = now;
-          }
-          if ((now - shot_start_time_).ToSecondf() > 8.0f) {
-            shot_start_time_ = now;
-            heat_limit_.current_heat += 2;
-          }
         } break;
         case 3:
         case 4:
         case 5: {
-          expect_trig_freq_ = 16;
+          expect_trig_freq_ = 12;
           heat_limit_.heat_threshold = 3.0f;
           heat_limit_.merge = 10;
-          /*弥补误差*/
         }
         default:
 
@@ -779,6 +822,112 @@ class InfantryLauncher {
       }
     }
     last_trig_freq_ = trig_freq_;
+  }
+
+  // 通过摩擦轮掉速确认首发, 并记录基准角.
+  void SingleLimit(LibXR::MillisecondTimestamp now) {
+    float fric_rpm = GetFricMeanAbsSpeed();
+    float peak_decay = 100;
+    fric_peak_rpm_ = std::max(fric_rpm, fric_peak_rpm_ - peak_decay);
+
+    if (launcher_event_ != LauncherEvent::SET_FRICMODE_READY) {
+      single_limit_probe_active_ = false;
+      return;
+    }
+
+    if (!single_limit_probe_active_) {
+      return;
+    }
+
+    if ((now - single_limit_probe_start_time_).ToSecondf() >
+        launcher::param::SINGLE_LIMIT_PROBE_TIMEOUT_SEC) {
+      single_limit_probe_active_ = false;
+      return;
+    }
+
+    if ((now - last_shot_confirm_time_).ToSecondf() <
+        launcher::param::SINGLE_LIMIT_REARM_SEC) {
+      return;
+    }
+
+    float min_ready_rpm = param_.fric1_setpoint_speed *
+                          launcher::param::SINGLE_LIMIT_MIN_READY_RATIO;
+    if (fric_peak_rpm_ < min_ready_rpm) {
+      return;
+    }
+
+    float fric_drop = fric_peak_rpm_ - fric_rpm;
+    if (fric_drop < launcher::param::SINGLE_LIMIT_DROP_RPM) {
+      return;
+    }
+
+    single_limit_base_angle_ = trig_angle_ = 0.;
+    single_limit_base_valid_ = true;
+    single_limit_done_index_ = 0;
+    single_limit_target_index_ = 0;
+    single_limit_target_active_ = false;
+    single_limit_probe_active_ = false;
+    target_trig_angle_ = single_limit_base_angle_;
+    trigger_step_active_ = false;
+    last_trig_time_ = now;
+    last_shot_confirm_time_ = now;
+  }
+
+  // 双摩擦轮均值, 降低单边噪声误判.
+  float GetFricMeanAbsSpeed() const {
+    return 0.5f *
+           (fabsf(param_fric_0_.velocity) + fabsf(param_fric_1_.velocity));
+  }
+
+  // 齿位索引转目标角度.
+  float GetSingleLimitTargetAngle(int32_t step_index) const {
+    return single_limit_base_angle_ +
+           static_cast<float>(step_index) * launcher::param::TRIG_STEP;
+  }
+
+  // 模式切回时恢复未完成的目标齿位.
+  void RestoreSingleLimitTarget() {
+    target_trig_angle_ = GetSingleLimitTargetAngle(single_limit_target_index_);
+    trigger_step_active_ = true;
+    shoot_active_ = true;
+  }
+
+  // 安排下一发的目标齿位.
+  void ScheduleSingleLimitTarget(int32_t step_index) {
+    single_limit_target_index_ = step_index;
+    single_limit_target_active_ = true;
+    RestoreSingleLimitTarget();
+  }
+
+  // SAFE/RELAX 后按当前角度回推最近齿位.
+  void SyncSingleLimitIndexFromAngle() {
+    if (!single_limit_base_valid_) {
+      return;
+    }
+    float step_progress =
+        (trig_angle_ - single_limit_base_angle_) / launcher::param::TRIG_STEP;
+    int32_t nearest_index = std::max<int32_t>(
+        0, static_cast<int32_t>(floorf(step_progress)));  // 向下取小
+    float nearest_angle = GetSingleLimitTargetAngle(nearest_index);
+    if (fabsf(trig_angle_ - nearest_angle) >
+        launcher::param::TRIGGER_SETTLE_ANGLE) {
+      return;
+    }
+    single_limit_done_index_ = nearest_index;
+    single_limit_target_index_ = nearest_index;
+    single_limit_target_active_ = false;
+  }
+
+  // 预留: 完整清空单发限位状态.
+  void ResetSingleLimitState() {
+    single_limit_base_valid_ = false;
+    single_limit_probe_active_ = false;
+    single_limit_target_active_ = false;
+    single_limit_done_index_ = 0;
+    single_limit_target_index_ = 0;
+    fric_peak_rpm_ = 0.0f;
+    last_shot_confirm_time_ = 0;
+    single_limit_probe_start_time_ = 0;
   }
   /**
    * @brief 拨盘控制解算
@@ -791,12 +940,8 @@ class InfantryLauncher {
     float plate_omega_ref = pid_trig_angle_.Calculate(
         target_trig_angle, trig_angle_,
         param_trig_.omega / param_.trig_gear_ratio, dt);
-    float omega_limit =
-        static_cast<float>(1.5f * M_2PI * trig_freq_ / param_.num_trig_tooth);
-    float motor_omega_ref =
-        std::clamp(plate_omega_ref, -omega_limit, omega_limit);
     out_trig = pid_trig_sp_.Calculate(
-        motor_omega_ref, param_trig_.omega / param_.trig_gear_ratio, dt);
+        plate_omega_ref, param_trig_.omega / param_.trig_gear_ratio, dt);
   }
 
   /**
